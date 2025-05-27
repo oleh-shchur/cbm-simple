@@ -1,0 +1,90 @@
+
+services:
+  mqtt_broker:
+    image: eclipse-mosquitto:2.0.21 # Using a specific version
+    container_name: cbm_mqtt
+    hostname: mqtt_broker
+    ports:
+      - "1883:1883" # Standard MQTT port
+      - "9001:9001" # MQTT over WebSockets (optional)
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    restart: unless-stopped
+
+  influxdb:
+    image: influxdb:2.7 # Using InfluxDB v2.x
+    container_name: cbm_influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - ./influxdb_data:/var/lib/influxdb2 # Persistence for InfluxDB data
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin          # Your desired admin username
+      - DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword    # Your desired admin password (change this!)
+      - DOCKER_INFLUXDB_INIT_ORG=my-cbm-org          # Your InfluxDB organization
+      - DOCKER_INFLUXDB_INIT_BUCKET=cbm_data         # Your InfluxDB bucket
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=mysecretadmintoken # Your InfluxDB admin token (change this & keep secure!)
+    restart: unless-stopped
+
+  simulator:
+    build: ./simulator
+    container_name: cbm_simulator
+    depends_on:
+      - mqtt_broker
+    environment:
+      - MQTT_BROKER_HOST=mqtt_broker
+      - MQTT_BROKER_PORT=1883
+      - DEVICE_ID=machine001
+      - SIMULATION_INTERVAL=5 # seconds
+    restart: unless-stopped
+  
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: cbm_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=adminpassword # Change this!
+    volumes:
+      - ./grafana_data:/var/lib/grafana
+    depends_on:
+      - influxdb
+    restart: unless-stopped
+
+  processor_alerter:
+    build: ./processor_alerter
+    container_name: cbm_processor_alerter
+    depends_on:
+      - mqtt_broker
+      - influxdb
+    ports:
+      - "8000:8000"
+    environment:
+      - MQTT_BROKER_HOST=mqtt_broker
+      - MQTT_BROKER_PORT=1883
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=mysecretadmintoken # Must match DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+      - INFLUXDB_ORG=my-cbm-org           # Must match DOCKER_INFLUXDB_INIT_ORG
+      - INFLUXDB_BUCKET=cbm_data          # Must match DOCKER_INFLUXDB_INIT_BUCKET
+      - ALERT_THRESHOLD_TEMP=35.0       # Example temperature threshold for alerts
+      - ALERT_CHECK_INTERVAL=10         # seconds
+    restart: unless-stopped
+
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: cbm_prometheus
+    depends_on:
+      - processor_alerter
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    restart: unless-stopped
+

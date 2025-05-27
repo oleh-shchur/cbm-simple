@@ -1,0 +1,3 @@
+paho-mqtt
+influxdb-client~=1.39  # Specify a version range for influxdb-client for InfluxDB 2.xprometheus_client
+prometheus_client
